@@ -1,0 +1,99 @@
+import sys
+import os
+import time
+from robot import Robot
+from pymodbus.client import ModbusTcpClient
+import robot
+import utils
+import speech_recognition as sr
+
+class DeltaArmController:
+    def __init__(self, config_file="examples/datas/parameters.csv", mic_index=1):
+        self.parameters = self.load_parameters(config_file)
+        self.robot = self.initialize_robot()
+        self.mic_index = mic_index
+        self.keywords = ["抓取物品", "移動到下一點位"]
+        self.work_positions = {
+            "workPosition1": self.parameters["workPosition1"],
+            "workPosition3": self.parameters["workPosition3"]
+        }
+
+    def load_parameters(self, config_file):
+        """載入設定參數."""
+        return utils.readListFromCsv(config_file)
+
+    def initialize_robot(self):
+        """初始化 Modbus 連線與機器人控制."""
+        client = ModbusTcpClient(host=self.parameters["host"], port=self.parameters["port"])
+        robotDRV = Robot(client,
+                         defaultSpeed=int(self.parameters["defaultSpeed"]),
+                         defaultAcceleration=int(self.parameters["defaultAcceleration"]),
+                         defaultDeceleration=int(self.parameters["defaultDeceleration"]))
+
+        if not robotDRV.prepareRobotForMotion():
+            print(f"機器人無法進入準備狀態, error code:{robotDRV.getRobotNotReadyReason()}")
+            sys.exit()
+
+        robotDRV.startMonitorErrors()
+        return robotDRV
+
+    def recognize_speech(self):
+        """語音識別，返回識別到的文字或 None."""
+        recognizer = sr.Recognizer()
+        with sr.Microphone(device_index=self.mic_index) as source:
+            print("請說話...")
+            audio = recognizer.listen(source)
+
+        try:
+            text = recognizer.recognize_google(audio, language="zh-TW")
+            print(f"你說的是: {text}")
+            return text
+        except sr.UnknownValueError:
+            print("無法識別語音")
+        except sr.RequestError:
+            print("無法連接到語音服務")
+        return None
+
+    def execute_action(self, text):
+        """根據語音指令執行對應動作."""
+        if "抓取物品" in text:
+            self.grasp_item()
+        elif "移動到下一點位" in text:
+            self.move_to_position("workPosition3")
+        else:
+            print("未找到匹配的指令")
+
+    def grasp_item(self):
+        """執行抓取動作."""
+        self.robot.suctionON()
+        time.sleep(2)
+        self.robot.suctionOFF()
+        print("完成抓取動作")
+
+    def move_to_position(self, position_key):
+        """移動機器人到指定的點位."""
+        position = self.work_positions.get(position_key)
+        if position:
+            self.robot.sendMotionCommand(position=position, speed=80, acceleration=100, deceleration=100,
+                                         robotCommand=robot.eRobotCommand.Robot_Go_MovP)
+            print(f"移動到 {position_key}")
+            while not self.robot.isRobotReachTargetPosition:
+                time.sleep(0.1)
+        else:
+            print(f"未知的點位: {position_key}")
+
+    def start(self):
+        """主執行流程."""
+        self.move_to_position("workPosition1")  # 初始位置
+        print("已到達點位，準備偵測語音指令...")
+
+        text = self.recognize_speech()
+        if text:
+            self.execute_action(text)
+
+if __name__ == "__main__":
+    try:
+        controller = DeltaArmController()
+        controller.start()
+    except robot.RobotErrorException as e:
+        print(e)
