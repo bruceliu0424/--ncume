@@ -1,0 +1,46 @@
+# -*- coding: utf-8 -*-
+import speech_recognition as sr
+from delta_arm import DeltaArm  # 假設已經有 Delta 手臂的控制模組
+
+# 初始化手臂
+arm = DeltaArm()
+
+def recognize_speech():
+    recognizer = sr.Recognizer()
+    with sr.Microphone() as source:
+        print("請說話...")
+        audio = recognizer.listen(source)
+    try:
+        text = recognizer.recognize_google(audio, language="zh-TW")
+        print(f"你說的是: {text}")
+        return text
+    except sr.UnknownValueError:
+        print("無法識別語音")
+    except sr.RequestError:
+        print("無法連接到語音服務")
+    return None
+
+def move_arm_to_point(point_name):
+    if point_name == "點位一":
+        arm.move_to(100, 100, 100)  # 移動到指定的點位 (X, Y, Z)
+        print("移動到點位一")
+    elif point_name == "點位二":
+        arm.move_to(200, 150, 50)   # 移動到另一個點位
+        print("移動到點位二")
+    else:
+        print(f"未知的點位: {point_name}")
+
+# 設定可辨識的指令
+points = ["點位一", "點位二"]
+
+# 語音轉文字
+text = recognize_speech()
+
+# 檢查指令並移動手臂
+if text:
+    for point in points:
+        if point in text:
+            move_arm_to_point(point)
+            break
+    else:
+        print("未找到對應的點位指令")
