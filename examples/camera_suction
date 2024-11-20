@@ -1,44 +1,120 @@
+import sys
+import os
+import time
+import cv2
 import numpy as np
+import pyrealsense2 as rs
+import speech_recognition as sr
+from pymodbus.client import ModbusTcpClient
+from drv_modbus import send
 
-# === 必須提供的參數 ===
+# === 初始化機械手臂與吸盤參數 ===
+home = [379.870, -2.034, 680.0, 179.987, -0.004, -106.121]
+drop = [466.225, -2.033, 360.695, 179.987, -0.004, 13.131]
+z_height = 346.40000000000003
 
 # 相機內參矩陣 (需標定)
-K = np.array([[600, 0, 320],    # fx, 0, cx
-              [0, 600, 240],    # 0, fy, cy
-              [0,   0,   1]])  # 0,  0,  1 (替換為實際標定結果)
+K = np.array([[600, 0, 320], [0, 600, 240], [0, 0, 1]])  # 替換為你的相機內參數
 
-# 相機到機械手臂基座的剛體變換矩陣 (需手眼校正)
-R = np.array([[1, 0, 0],
-              [0, 1, 0],
-              [0, 0, 1]])  # 假設為單位矩陣，需替換為實際旋轉矩陣
-T = np.array([[0.1],  # 替換為實際平移值 (單位: 米)
-              [0.2],
-              [0.3]])  # 假設相機距離基座中心為 0.1, 0.2, 0.3 米
-RT = np.hstack((R, T))  # 3x4 矩陣
-RT = np.vstack((RT, [0, 0, 0, 1]))  # 4x4 齊次坐標剛體變換矩陣
+# 剛體變換矩陣 (手眼校正結果，需標定)
+R = np.array([[0.99, -0.05, 0.01], [0.05, 0.99, 0.02], [-0.01, -0.02, 1.00]])  # 替換為你的旋轉矩陣
+T = np.array([[0.1], [0.2], [0.3]])  # 替換為你的平移向量（單位：米）
+RT = np.hstack((R, T))
+RT = np.vstack((RT, [0, 0, 0, 1]))
 
-# 吸盤相對於機械手臂末端法蘭盤的偏移量 (根據安裝位置測量)
-gripper_offset = np.array([0.05, 0.0, 0.05])  # 假設吸盤偏移為 5 cm (X, Z)
+# 吸盤偏移量 (測量吸盤相對法蘭盤的位置)
+gripper_offset = np.array([0.05, 0.0, 0.05])
 
-# === 目標物體的像素坐標和深度值 ===
-u, v = 320, 240  # 替換為目標物體的像素坐標 (來自檢測)
-Zc = 0.5         # 替換為目標物體的深度值 (單位: 米，來自深度相機)
+# 初始化 RealSense 相機
+pipeline = rs.pipeline()
+config = rs.config()
+config.enable_stream(rs.stream.color, 640, 480, rs.format.bgr8, 30)
+pipeline.start(config)
 
-# === 計算過程 ===
+# 初始化機械手臂
+c = ModbusTcpClient(host="192.168.1.1", port=502)
+c.connect()
 
-# 1. 像素坐標轉換為相機坐標
-pixel_coords = np.array([u, v, 1])  # 像素齊次坐標
-camera_coords = Zc * np.linalg.inv(K).dot(pixel_coords)  # 相機坐標系下的三維點
-print("相機坐標系下的物體位置:", camera_coords)
+# === 功能函數 ===
 
-# 2. 相機坐標轉換為機械手臂基座的世界坐標
-camera_coords_h = np.hstack((camera_coords, [1]))  # 添加齊次坐標維度
-world_coords = RT.dot(camera_coords_h)[:3]  # 使用剛體變換計算世界坐標
-print("機械手臂基座下的物體位置:", world_coords)
+# 語音指令功能
+def recognize_speech():
+    recognizer = sr.Recognizer()
+    with sr.Microphone() as source:
+        print("請說話...")
+        audio = recognizer.listen(source)
+    try:
+        text = recognizer.recognize_google(audio, language="zh-TW")
+        print(f"你說的是: {text}")
+        return text
+    except sr.UnknownValueError:
+        print("無法識別語音")
+        return None
+    except sr.RequestError:
+        print("無法連接到語音服務")
+        return None
 
-# 3. 計算吸盤的世界坐標位置
-gripper_coords = world_coords + gripper_offset
-print("吸盤的世界坐標位置:", gripper_coords)
+# 像素坐標轉換為相機坐標
+def pixel_to_camera_coords(u, v, Zc):
+    pixel_coords = np.array([u, v, 1])
+    camera_coords = Zc * np.linalg.inv(K).dot(pixel_coords)  # 相機座標系的三維點
+    return camera_coords
 
-# === 結果 ===
-print("目標吸盤世界坐標:", gripper_coords)
+# 相機坐標轉換為機械手臂基座坐標
+def camera_to_world_coords(camera_coords):
+    camera_coords_h = np.hstack((camera_coords, [1]))  # 齊次坐標
+    world_coords = RT.dot(camera_coords_h)[:3]  # 世界坐標系
+    return world_coords
+
+# 機械手臂移動與吸附
+def move_and_pick_target(x, y, z):
+    send.Go_Position(c, x, y, home[2], home[3], home[4], home[5], speed=50)
+    send.Go_Position(c, x, y, z, home[3], home[4], home[5], speed=50)
+    send.Suction_ON(c)
+    time.sleep(2)
+    send.Go_Position(c, x, y, home[2], home[3], home[4], home[5], speed=50)
+    send.Go_Position(c, drop[0], drop[1], drop[2], home[3], home[4], home[5], speed=50)
+    send.Suction_OFF(c)
+    send.Go_Position(c, home[0], home[1], home[2], home[3], home[4], home[5], speed=50)
+    print("吸附完成")
+
+# === 主程式 ===
+if __name__ == "__main__":
+    base_path = r"C:\Users\Bruce\OneDrive\Desktop\DRV-Modbus-main\examples"
+    try:
+        while True:
+            # 接收語音指令
+            text = recognize_speech()
+            if not text:
+                continue
+
+            # 根據語音指令選擇目標物品
+            if "橡皮擦" in text:
+                target_name = "橡皮擦"
+                u, v, Zc = 320, 240, 0.5  # 假設橡皮擦的位置與深度
+            elif "硬幣" in text:
+                target_name = "硬幣"
+                u, v, Zc = 330, 250, 0.4  # 假設硬幣的位置與深度
+            else:
+                print("未識別的目標物品")
+                continue
+
+            # 計算相機坐標
+            camera_coords = pixel_to_camera_coords(u, v, Zc)
+            print(f"{target_name} 相機坐標: {camera_coords}")
+
+            # 計算世界坐標
+            world_coords = camera_to_world_coords(camera_coords)
+            print(f"{target_name} 世界坐標: {world_coords}")
+
+            # 計算吸盤位置
+            gripper_coords = world_coords + gripper_offset
+            print(f"{target_name} 吸盤世界坐標: {gripper_coords}")
+
+            # 執行吸取操作
+            move_and_pick_target(gripper_coords[0], gripper_coords[1], gripper_coords[2])
+
+    except KeyboardInterrupt:
+        print("程式結束")
+    except Exception as e:
+        print(f"發生錯誤: {e}")
