@@ -1,0 +1,44 @@
+import numpy as np
+
+# === 必須提供的參數 ===
+
+# 相機內參矩陣 (需標定)
+K = np.array([[600, 0, 320],    # fx, 0, cx
+              [0, 600, 240],    # 0, fy, cy
+              [0,   0,   1]])  # 0,  0,  1 (替換為實際標定結果)
+
+# 相機到機械手臂基座的剛體變換矩陣 (需手眼校正)
+R = np.array([[1, 0, 0],
+              [0, 1, 0],
+              [0, 0, 1]])  # 假設為單位矩陣，需替換為實際旋轉矩陣
+T = np.array([[0.1],  # 替換為實際平移值 (單位: 米)
+              [0.2],
+              [0.3]])  # 假設相機距離基座中心為 0.1, 0.2, 0.3 米
+RT = np.hstack((R, T))  # 3x4 矩陣
+RT = np.vstack((RT, [0, 0, 0, 1]))  # 4x4 齊次坐標剛體變換矩陣
+
+# 吸盤相對於機械手臂末端法蘭盤的偏移量 (根據安裝位置測量)
+gripper_offset = np.array([0.05, 0.0, 0.05])  # 假設吸盤偏移為 5 cm (X, Z)
+
+# === 目標物體的像素坐標和深度值 ===
+u, v = 320, 240  # 替換為目標物體的像素坐標 (來自檢測)
+Zc = 0.5         # 替換為目標物體的深度值 (單位: 米，來自深度相機)
+
+# === 計算過程 ===
+
+# 1. 像素坐標轉換為相機坐標
+pixel_coords = np.array([u, v, 1])  # 像素齊次坐標
+camera_coords = Zc * np.linalg.inv(K).dot(pixel_coords)  # 相機坐標系下的三維點
+print("相機坐標系下的物體位置:", camera_coords)
+
+# 2. 相機坐標轉換為機械手臂基座的世界坐標
+camera_coords_h = np.hstack((camera_coords, [1]))  # 添加齊次坐標維度
+world_coords = RT.dot(camera_coords_h)[:3]  # 使用剛體變換計算世界坐標
+print("機械手臂基座下的物體位置:", world_coords)
+
+# 3. 計算吸盤的世界坐標位置
+gripper_coords = world_coords + gripper_offset
+print("吸盤的世界坐標位置:", gripper_coords)
+
+# === 結果 ===
+print("目標吸盤世界坐標:", gripper_coords)
