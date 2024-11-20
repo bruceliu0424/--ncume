@@ -1,0 +1,91 @@
+import cv2
+import os
+import speech_recognition as sr
+from tensorflow.keras.models import load_model
+import numpy as np
+from delta_arm import DeltaArm  # 假設台達手臂的控制函式庫
+
+# 初始化語音識別
+recognizer = sr.Recognizer()
+
+# 初始化台達手臂
+arm = DeltaArm()  # 初始化機械臂
+
+# 加載影像辨識模型
+model_path = "o_k_classifier.h5"
+model = load_model(model_path)
+
+def preprocess_image(image):
+    """預處理影像以輸入模型"""
+    gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
+    resized = cv2.resize(gray, (64, 64))
+    return resized.reshape(1, 64, 64, 1) / 255.0
+
+def recognize_block():
+    """辨識目前攝像頭畫面中的方塊是 O 還是 K"""
+    cap = cv2.VideoCapture(0)  # 開啟攝像頭
+    ret, frame = cap.read()
+    if not ret:
+        print("攝像頭讀取失敗！")
+        cap.release()
+        return None
+
+    processed = preprocess_image(frame)
+    prediction = model.predict(processed)
+    label = "O" if prediction[0][0] > prediction[0][1] else "K"
+    print(f"辨識結果: {label}")
+
+    # 關閉攝像頭
+    cap.release()
+    return label
+
+def voice_command():
+    """進行語音指令識別"""
+    with sr.Microphone() as source:
+        print("請說出指令（例如：幫我拿方塊O）：")
+        try:
+            audio = recognizer.listen(source)
+            command = recognizer.recognize_google(audio, language='zh-TW')  # 中文語音
+            print(f"語音識別結果: {command}")
+            return command
+        except sr.UnknownValueError:
+            print("無法辨識語音，請再試一次！")
+            return None
+        except sr.RequestError as e:
+            print(f"語音識別服務出現錯誤: {e}")
+            return None
+
+def move_arm_to_block(block_label):
+    """控制台達手臂抓取指定方塊"""
+    if block_label == "O":
+        arm.move_to_position("O_position")  # 移動到方塊 O 的位置
+        arm.grab()  # 抓取
+        print("抓取方塊 O 完成！")
+    elif block_label == "K":
+        arm.move_to_position("K_position")  # 移動到方塊 K 的位置
+        arm.grab()  # 抓取
+        print("抓取方塊 K 完成！")
+    else:
+        print("無法識別目標方塊！")
+
+# 主程式
+while True:
+    command = voice_command()
+    if command:
+        if "方塊O" in command:
+            block = recognize_block()
+            if block == "O":
+                move_arm_to_block("O")
+            else:
+                print("當前未找到方塊 O！")
+        elif "方塊K" in command:
+            block = recognize_block()
+            if block == "K":
+                move_arm_to_block("K")
+            else:
+                print("當前未找到方塊 K！")
+        elif "結束" in command:  # 結束程序
+            print("結束程式。")
+            break
+        else:
+            print("未識別的指令，請再試一次！")
