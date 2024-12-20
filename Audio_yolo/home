@@ -1,0 +1,30 @@
+from drv_modbus import send
+from drv_modbus import request
+from realsense import realsense
+from pymodbus.client import ModbusTcpClient
+import numpy as np
+import cv2 #引用OpenCV
+import time 
+from ultralytics import YOLO
+import pyrealsense2 as rs
+import random
+import torch
+c = ModbusTcpClient(host = "192.168.1.1", port = 502, unit_id = 2)
+c.connect()
+# home = [289.612, 3.093, 661.793, -180.000, -0.209, -107.009] #初始拍攝位置，要看到4個aruco
+# real_central = [526.316, 87.893, 131.094, 179.986, -0.209, -103.270] #初始拍攝位置，要看到4個aruco 
+send.Suction_OFF(c) #關吸嘴
+
+Nozzle = [324.441, 3.093, 520.061, 179.986, -0.209, -1.155]
+home = [289.612, 3.093, 520.061, 179.986, -0.209, -103.270] #初始拍攝位置，要看到4個aruco
+drop0 =[157.252, 343.368, 274.394, 179.986, -0.209, 88.962] #藍色茶包放置點
+drop1 =[279.601, 343.368, 274.394, 179.986, -0.209, 88.962] #橘色茶包放置點
+drop2 =[400.490, 343.368, 274.394, 179.986, -0.209, 88.962] #紫色茶包放置點
+drop3 =[517.395, 343.368, 274.394, 179.986, -0.209, 88.962] #黃色茶包放置點
+c = ModbusTcpClient(host = "192.168.1.1", port = 502, unit_id = 2)
+c.connect()
+#send.Go_Position(c, Nozzle[0], Nozzle[1], Nozzle[2], Nozzle[3], Nozzle[4], Nozzle[5], 100)# 顯示結果 架高平台要大於325會比較好
+send.Go_Position(c, home[0], home[1], home[2], home[3], home[4], home[5], 100)
+# send.Go_Position(c, drop3[0], drop3[1], drop3[2], drop3[3], drop3[4], drop3[5], 100)
+
+send.Suction_OFF(c) #關吸嘴
